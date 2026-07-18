@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+
+W=10
+H=20
+MAX=$((W*H - 1))
+clear
+tput civis
+
+declare -a grid
+
+T=(
+'XX.
+ .XX'
+
+'.XX
+ XX.'
+
+'XX
+ XX'
+
+'X..
+ XXX'
+
+'.X.
+ XXX'
+
+'X
+ X
+ X
+ X'
+
+'..X
+ XXX'
+)
+
+render() {
+  local r c color
+  for ((r=0; r<H; r++)); do
+    for ((c=0; c<W; c++)); do
+      color=${grid[r*W+c]:-0}
+      case "$color" in
+        0) printf .. ;;
+        1) printf "\x1B[31m" ;;&
+        2) printf "\x1B[32m" ;;&
+        3) printf "\x1B[33m" ;;&
+        4) printf "\x1B[34m" ;;&
+        5) printf "\x1B[35m" ;;&
+        6) printf "\x1B[36m" ;;&
+        7) printf "\x1B[38;5;208m" ;;&
+        *) printf "%s\x1B[0m" $'\u2588'$'\u2588' ;;
+      esac
+    done
+    echo
+  done
+}
+
+declare -a PIECE
+piece() {
+  local p=$1
+  local char
+  local i=0
+  local last=0
+  PIECE=()
+  PC=$((p+1))
+  PIECE_WIDTH=0
+  PIECE_HEIGHT=0
+  while IFS= read -n1 char; do
+    case "$char" in
+      '')
+        if [[ $PIECE_WIDTH -eq 0 ]]; then
+          PIECE_WIDTH=$i
+        fi
+        ((i=W+last,last=i,PIECE_HEIGHT++))
+        continue ;;
+      .) PIECE+=(-1) ;;
+      X) PIECE+=($i) ;;
+    esac
+    ((i++))
+  done <<< "${T[p]// }"
+}
+
+try_rotate_left() {
+  local pos=$((PY*W+PX))
+  rotate_left
+  if ! try_place $pos; then
+    rotate_right
+  fi
+}
+
+try_rotate_right() {
+  local pos=$((PY*W+PX))
+  rotate_right
+  if ! try_place $pos; then
+    rotate_left
+  fi
+}
+
+rotate_left() {
+  local -a OLD_PIECE=("${PIECE[@]}")
+  local OLD_WIDTH=$PIECE_WIDTH
+  local OLD_HEIGHT=$PIECE_HEIGHT
+  local len=${#PIECE[@]}
+  PIECE_WIDTH=$((len / OLD_WIDTH))
+  PIECE_HEIGHT=$((len / PIECE_WIDTH))
+  PIECE=()
+  local r c
+  local i=0
+  if [[ $OLD_HEIGHT -lt $OLD_WIDTH ]]; then
+    local i=$(( (OLD_HEIGHT-OLD_WIDTH)*W ))
+  fi
+  local last=$i
+  for ((r=PIECE_HEIGHT-1; r>=0; r--)); do
+    for ((c=0; c<PIECE_WIDTH; c++)); do
+      local prev="${OLD_PIECE[r+c*OLD_WIDTH]}"
+      if [[ $prev -ne -1 ]]; then
+        PIECE+=("$i")
+      else
+        PIECE+=(-1)
+      fi
+      ((i++))
+    done
+    ((i=W+last,last=i))
+  done
+}
+
+rotate_right() {
+  local -a OLD_PIECE=("${PIECE[@]}")
+  local OLD_WIDTH=$PIECE_WIDTH
+  local OLD_HEIGHT=$PIECE_HEIGHT
+  local len=${#PIECE[@]}
+  PIECE_WIDTH=$((len / OLD_WIDTH))
+  PIECE_HEIGHT=$((len / PIECE_WIDTH))
+  PIECE=()
+  local r c
+  local i=0
+  if [[ $OLD_HEIGHT -lt $OLD_WIDTH ]]; then
+    local i=$(( (OLD_HEIGHT-OLD_WIDTH)*W ))
+  fi
+  local last=$i
+  for ((r=0; r<PIECE_HEIGHT; r++)); do
+    for ((c=PIECE_WIDTH-1; c>=0; c--)); do
+      local prev="${OLD_PIECE[r+c*OLD_WIDTH]}"
+      if [[ $prev -ne -1 ]]; then
+        PIECE+=("$i")
+      else
+        PIECE+=(-1)
+      fi
+      ((i++))
+    done
+    ((i=W+last,last=i))
+  done
+}
+
+
+set() {
+  local i=$1
+  local what=$2
+  if [[ $i -ge 0 ]] && [[ $i -le $MAX ]]; then
+    grid[i]=${what:-$PC}
+  fi
+}
+
+PX=4
+PY=0
+
+next() {
+  PX=4
+  PY=-2
+  piece $((RANDOM % 7))
+  NEXT=false
+  local r c i j
+  for ((r=H-1; r>=0; --r)); do
+    local cleared=0
+    for ((c=0; c<W; c++)); do
+      local cur=${grid[r*W+c]:-0}
+      if [[ "$cur" != 0 ]]; then
+        ((cleared++))
+      fi
+    done
+    if [[ $cleared -eq $W ]]; then
+      # shift everything down
+      for ((i=r; i>0; --i)); do
+        for ((j=0; j<W; ++j)); do
+          grid[i*W+j]=${grid[(i-1)*W+j]:-0}
+        done
+      done
+      for ((c=0; c<W; c++)); do
+        grid[c]=0
+      done
+      ((r+=1))
+    fi
+  done
+  for ((c=0; c<W; c++)); do
+    if [[ ${grid[c]:-0} != 0 ]]; then
+      echo "Game Over!"
+      exit 0
+    fi
+  done
+}
+NEXT=false
+
+place() {
+  NEXT=false
+  local pos=$1
+  local i
+  for i in "${PIECE[@]}"; do
+    [[ $i -eq -1 ]] && continue
+    if (( i+pos+W < 0 )); then
+      continue
+    fi
+    if ((i+pos+W > MAX)); then
+      NEXT=true
+      break
+    fi
+    local below=${grid[i+pos+W]}
+    if [[ -n "$below" ]] && [[ $below -ne 0 ]]; then
+      NEXT=true
+    fi
+  done
+  for i in "${PIECE[@]}"; do
+    [[ $i -eq -1 ]] && continue
+    set $((i+pos))
+  done
+}
+
+try_place() {
+  local pos=$1
+  local i
+  local x=$((pos%W))
+  local y=$((pos/W))
+  if ((x + PIECE_WIDTH > W)); then
+    return 1
+  fi
+  for i in "${PIECE[@]}"; do
+    [[ $i -eq -1 ]] && continue
+    if (( i+pos < 0 )); then
+      continue
+    fi
+    if ((i+pos > MAX)); then
+      return 1
+    fi
+    local cur=${grid[i+pos]:-0}
+    if [[ "$cur" != 0 ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+unplace() {
+  local pos=$1
+  local i
+  for i in "${PIECE[@]}"; do
+    [[ $i -eq -1 ]] && continue
+    set $((i+pos)) 0
+  done
+}
+
+test_dir() {
+  case "$1" in
+    left)
+      if ((PX == 0)); then
+        return 1
+      fi
+      local pos=$((PY*W+PX-1))
+      try_place $pos
+      return $?
+      ;;
+    right)
+      if ((PX == W - 1)); then
+        return 1
+      fi
+      local pos=$((PY*W+PX+1))
+      try_place $pos
+      return $?
+      ;;
+    down)
+      local pos=$(((PY+1)*W+PX))
+      try_place $pos
+      return $?
+      ;;
+  esac
+  return 0
+}
+
+game_loop() {
+  piece $((RANDOM % 7))
+  place $((PX+PY*W))
+  render
+  while read -r action char; do
+    case "$action" in
+      tick)
+        unplace $((PX+PY*W))
+        if $NEXT; then
+          place $((PX+PY*W))
+          next
+        else
+          ((PY++))
+          place $((PX+PY*W))
+        fi
+        ;;
+      input)
+        unplace $((PX+PY*W))
+        if [[ "$char" == "a" ]] && test_dir left; then
+          ((PX--))
+        elif [[ "$char" == "s" ]] && test_dir down; then
+          ((PY++))
+        elif [[ "$char" == "d" ]] && test_dir right; then
+          ((PX++))
+        elif [[ "$char" == "q" ]]; then
+          try_rotate_left
+        elif [[ "$char" == "e" ]]; then
+          try_rotate_right
+        fi
+        place $((PX+PY*W))
+        ;;
+    esac
+    echo -ne '\x1B[1;1H'
+    render
+  done
+}
+
+input_task() {
+    local char
+    while read -sn1 char; do
+      echo "input $char"
+    done
+}
+
+tick_task() {
+    while true; do
+      sleep 0.5
+      echo tick
+    done
+}
+
+[[ ! -p /tmp/game-loop ]] && mkfifo /tmp/game-loop
+
+input_task < /dev/tty > /tmp/game-loop &
+tick_task > /tmp/game-loop &
+
+game_loop < /tmp/game-loop
