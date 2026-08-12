@@ -3,7 +3,15 @@
 W=10
 H=20
 MAX=$((W*H - 1))
-clear
+
+cleanup() {
+	tput rmcup
+	tput cnorm
+}
+
+trap cleanup EXIT
+
+tput smcup
 tput civis
 
 declare -a grid
@@ -289,6 +297,7 @@ game_loop() {
   render
   while read -r action char; do
     case "$action" in
+      exit) exit 0;;
       tick)
         unplace $((PX+PY*W))
         if $NEXT; then
@@ -323,20 +332,23 @@ game_loop() {
 input_task() {
     local char
     while read -sn1 char; do
-      echo "input $char"
+      echo "input $char" || return 1
     done
+    echo "exit"
 }
 
 tick_task() {
     while true; do
       sleep 0.5
-      echo tick
+      echo tick || return 1
     done
 }
 
 [[ ! -p /tmp/game-loop ]] && mkfifo /tmp/game-loop
 
-input_task < /dev/tty > /tmp/game-loop &
+input_task <&0 > /tmp/game-loop &
 tick_task > /tmp/game-loop &
+
+exec 0<&-
 
 game_loop < /tmp/game-loop
