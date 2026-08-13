@@ -7,10 +7,50 @@
 # some reference taken from https://gitlab.freedesktop.org/libevdev/libevdev/
 # as reading kernel docs is something i didn't feel like doing.
 
+# if missing, substrings will split on utf-8 bytes. ask me how i know.
+LC_ALL=C
+
 # `sizeof(struct input_event)` in '/usr/include/linux/linux/input.h'
 INPUT_EVENT_SIZE=24
 
+# usage: read-buffer buffer size < source
+# buffer has to be a declared array variable
+#
+read-buffer() {
+  local remaining chunk size
+  # avoid cricular nameref by _ prefix, i don't understand nameref well x3
+  local -n _buffer=$1
+  # clear buffer!
+  _buffer=()
+
+  # read loop inspired by https://github.com/bahamas10/bash-md5/blob/ce1e4d45760f4b7e5ec35ae52527c22aae877271/md5#L123
+  for ((remaining = $2; remaining > 0; remaining -= size)); do
+    IFS= read -r -d '' -n "$remaining" chunk
+    local code=$?
+    size=${#chunk}
+
+    for ((i = 0; i < size; i++)); do
+      local c=${chunk:i:1}
+      printf -v c '%d' "'$c"
+      _buffer+=("$c")
+    done
+
+    if ((size != remaining)); then
+      _buffer+=(0)
+      ((size++))
+    fi
+
+    # should never happen if the interface holds
+    if ((code != 0)); then
+     echo -e "read failed short (code = $code)\nbuffer = ${_buffer[*]}" >&2
+     # bail because this *really* shouldn't happen
+     exit 1
+    fi
+  done
+}
+
 process() {
+  local -a buffer
   local event_type event_code event_value
   
   # open file. never closed because of looping in `while true`.
@@ -24,11 +64,8 @@ process() {
     #          and file descriptors, and the evdev driver's files throw EINVAL
     #          on reads smaller than an event size
     # 
-    # solution: use hexdump (womp womp fork) as it uses a bigger bufsize
-    #           on my system it's 4096 but yours may vary.
-    #           this technically isn't correct *either*, because it skips an
-    #           EV_SYN event but we don't care about it sooooo ;3c
-    readarray buffer < <(hexdump -v -n $INPUT_EVENT_SIZE -e '1/1 "%u\n"' <&3)
+    # solution: use dd (womp womp fork) as it allows to specify a block size
+    read-buffer buffer $INPUT_EVENT_SIZE < <(dd bs=$INPUT_EVENT_SIZE count=1 status=none <&3)
 
     # type: u16 @ 16-17
     event_type=$((buffer[16] | buffer[17] << 8))
@@ -101,4 +138,4 @@ EOF
 }
 
 main "$@"
- 
+
